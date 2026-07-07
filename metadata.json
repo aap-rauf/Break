@@ -1,0 +1,6 @@
+{
+  "name": "Break Tracker",
+  "description": "An offline-first workplace break tracker with active timers and overtime alerts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
