@@ -22,13 +22,64 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
-class BreakTrackerViewModel(private val repository: EmployeeRepository) : ViewModel() {
+sealed class UpdateState {
+    object Idle : UpdateState()
+    object Checking : UpdateState()
+    data class UpdateAvailable(val version: String, val changelog: String, val size: String) : UpdateState()
+    object UpToDate : UpdateState()
+    data class Downloading(val progress: Float) : UpdateState()
+    object Installing : UpdateState()
+    object InstallReady : UpdateState()
+    data class Error(val message: String) : UpdateState()
+}
+
+class BreakTrackerViewModel(
+    private val repository: EmployeeRepository,
+    private val sharedPrefs: android.content.SharedPreferences
+) : ViewModel() {
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    private val _isDarkMode = MutableStateFlow(true) // Default to dark mode as requested
+    private val _isDarkMode = MutableStateFlow(sharedPrefs.getBoolean("dark_mode", true))
     val isDarkMode: StateFlow<Boolean> = _isDarkMode.asStateFlow()
+
+    private val _selectedTheme = MutableStateFlow(sharedPrefs.getString("color_theme", "#6750A4") ?: "#6750A4")
+    val selectedTheme: StateFlow<String> = _selectedTheme.asStateFlow()
+
+    private val _selectedTimeZoneId = MutableStateFlow(sharedPrefs.getString("timezone_id", TimeZone.getDefault().id) ?: TimeZone.getDefault().id)
+    val selectedTimeZoneId: StateFlow<String> = _selectedTimeZoneId.asStateFlow()
+
+    private val _appVersion = MutableStateFlow(sharedPrefs.getString("app_version", "1.2.1") ?: "1.2.1")
+    val appVersion: StateFlow<String> = _appVersion.asStateFlow()
+
+    private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
+
+    private val _managerName = MutableStateFlow(sharedPrefs.getString("manager_name", "Rauf Hossain") ?: "Rauf Hossain")
+    val managerName: StateFlow<String> = _managerName.asStateFlow()
+
+    private val _managerRole = MutableStateFlow(sharedPrefs.getString("manager_role", "Workplace Administrator") ?: "Workplace Administrator")
+    val managerRole: StateFlow<String> = _managerRole.asStateFlow()
+
+    private val _managerAvatar = MutableStateFlow(sharedPrefs.getString("manager_avatar", "img_profile_avatar") ?: "img_profile_avatar")
+    val managerAvatar: StateFlow<String> = _managerAvatar.asStateFlow()
+
+    private val _managerEmail = MutableStateFlow(sharedPrefs.getString("manager_email", "raufhossain548@gmail.com") ?: "raufhossain548@gmail.com")
+    val managerEmail: StateFlow<String> = _managerEmail.asStateFlow()
+
+    fun updateManagerProfile(name: String, role: String, email: String, avatar: String) {
+        _managerName.value = name
+        _managerRole.value = role
+        _managerEmail.value = email
+        _managerAvatar.value = avatar
+        sharedPrefs.edit()
+            .putString("manager_name", name)
+            .putString("manager_role", role)
+            .putString("manager_email", email)
+            .putString("manager_avatar", avatar)
+            .apply()
+    }
 
     // Employees list filtered by search query
     val employees: StateFlow<List<Employee>> = repository.allEmployees
@@ -65,16 +116,28 @@ class BreakTrackerViewModel(private val repository: EmployeeRepository) : ViewMo
     private val sentNotifications = mutableSetOf<Pair<Int, Int>>()
 
     fun toggleDarkMode() {
-        _isDarkMode.value = !_isDarkMode.value
+        val newValue = !_isDarkMode.value
+        _isDarkMode.value = newValue
+        sharedPrefs.edit().putBoolean("dark_mode", newValue).apply()
+    }
+
+    fun setSelectedTheme(theme: String) {
+        _selectedTheme.value = theme
+        sharedPrefs.edit().putString("color_theme", theme).apply()
+    }
+
+    fun setTimeZoneId(tzId: String) {
+        _selectedTimeZoneId.value = tzId
+        sharedPrefs.edit().putString("timezone_id", tzId).apply()
     }
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
     }
 
-    fun addEmployee(name: String, role: String) {
+    fun addEmployee(name: String, role: String, avatarIndex: Int = 0) {
         viewModelScope.launch {
-            repository.insertEmployee(Employee(name = name, role = role))
+            repository.insertEmployee(Employee(name = name, role = role, avatarIndex = avatarIndex))
         }
     }
 
@@ -114,7 +177,9 @@ class BreakTrackerViewModel(private val repository: EmployeeRepository) : ViewMo
             repository.updateEmployee(updated)
 
             // Save break history
-            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).apply {
+                timeZone = TimeZone.getTimeZone(_selectedTimeZoneId.value)
+            }
             val dateStr = dateFormat.format(Date(startTime))
 
             val record = BreakRecord(
@@ -214,7 +279,9 @@ class BreakTrackerViewModel(private val repository: EmployeeRepository) : ViewMo
         val records = allBreakRecords.value
         if (records.isEmpty()) return
 
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).apply {
+            timeZone = TimeZone.getTimeZone(_selectedTimeZoneId.value)
+        }
         val csvHeader = "Record ID,Employee ID,Employee Name,Date,Start Time,End Time,Duration (seconds),Duration (formatted)\n"
         val csvBody = records.joinToString("\n") { record ->
             val startFormatted = dateFormat.format(Date(record.startTime))
@@ -254,13 +321,65 @@ class BreakTrackerViewModel(private val repository: EmployeeRepository) : ViewMo
             e.printStackTrace()
         }
     }
+
+    fun checkForUpdates() {
+        if (_updateState.value is UpdateState.Checking || _updateState.value is UpdateState.Downloading || _updateState.value is UpdateState.Installing) return
+
+        viewModelScope.launch {
+            _updateState.value = UpdateState.Checking
+            delay(1500) // Simulate network request delay
+
+            val currentVer = _appVersion.value
+            if (currentVer == "1.2.1") {
+                _updateState.value = UpdateState.UpdateAvailable(
+                    version = "1.3.0",
+                    changelog = "• Multi-Theme Visual Color Customization\n• System Clock Diagnostics & Timezone Selector\n• Live Dynamic Performance & Memory Enhancements\n• Accessibility Touch Target Standard Upgrades (48dp)",
+                    size = "2.4 MB"
+                )
+            } else {
+                _updateState.value = UpdateState.UpToDate
+            }
+        }
+    }
+
+    fun downloadAndInstallUpdate() {
+        val currentState = _updateState.value
+        if (currentState !is UpdateState.UpdateAvailable) return
+
+        viewModelScope.launch {
+            _updateState.value = UpdateState.Downloading(0.0f)
+            
+            val steps = 20
+            for (i in 1..steps) {
+                delay(150) // Simulate progressive download
+                val progress = i.toFloat() / steps
+                _updateState.value = UpdateState.Downloading(progress)
+            }
+
+            _updateState.value = UpdateState.Installing
+            delay(1500) // Simulate background installer unpacking/applying assets
+
+            val newVersion = currentState.version
+            _appVersion.value = newVersion
+            sharedPrefs.edit().putString("app_version", newVersion).apply()
+
+            _updateState.value = UpdateState.InstallReady
+        }
+    }
+
+    fun resetUpdateState() {
+        _updateState.value = UpdateState.Idle
+    }
 }
 
-class BreakTrackerViewModelFactory(private val repository: EmployeeRepository) : ViewModelProvider.Factory {
+class BreakTrackerViewModelFactory(
+    private val repository: EmployeeRepository,
+    private val sharedPrefs: android.content.SharedPreferences
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(BreakTrackerViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return BreakTrackerViewModel(repository) as T
+            return BreakTrackerViewModel(repository, sharedPrefs) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

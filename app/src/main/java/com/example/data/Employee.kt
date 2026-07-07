@@ -9,5 +9,6 @@ data class Employee(
     val name: String,
     val role: String = "",
     val isOnBreak: Boolean = false,
-    val breakStartTime: Long? = null
+    val breakStartTime: Long? = null,
+    val avatarIndex: Int = 0
 )

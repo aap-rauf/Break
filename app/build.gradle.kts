@@ -17,8 +17,8 @@ android {
     applicationId = "com.aistudio.breaktracker.qpvzxl"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 120
+    versionName = "1.2.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
